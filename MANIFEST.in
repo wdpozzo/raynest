@@ -1,0 +1,9 @@
+include DESCRIPTION.rst
+include LICENSE
+include raynest/parameter.c
+prune .github
+exclude .git*
+exclude .travis.yml
+exclude publish-key.enc
+
+

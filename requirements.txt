@@ -1,0 +1,11 @@
+numpy
+scipy
+corner
+tqdm
+cython
+matplotlib
+ray
+h5py
+dill
+psutil
+
