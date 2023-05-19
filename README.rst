@@ -1,4 +1,4 @@
-CPNest
+raynest
 ======
 
 Parallel nested sampling in python
@@ -9,21 +9,21 @@ Parallel nested sampling in python
 
 .. image:: https://img.shields.io/badge/license-MIT-blue.svg
    :alt: MIT license
-   :target: https://github.com/johnveitch/cpnest/blob/master/LICENSE
+   :target: https://github.com/wdpozzo/raynest/blob/master/LICENSE
 
 walter.delpozzo@ligo.org,
 john.veitch@ligo.org
 
-CPNest is a python module for performing Bayesian Inference.
-Documentation at `GitHub Pages <https://johnveitch.github.io/cpnest/>`_.
+raynest is a python module for performing Bayesian Inference.
+Documentation at `GitHub Pages <https://wdpozzo.github.io/cpnest/>`_.
 
 The latest release is available from pip and conda
 
-.. image:: https://pypip.in/v/cpnest/badge.png
-    :target: https://pypi.python.org/pypi/cpnest
+.. image:: https://pypip.in/v/raynest/badge.png
+    :target: https://pypi.python.org/pypi/raynest
     
-.. image:: https://anaconda.org/conda-forge/cpnest/badges/version.svg
-   :target: https://anaconda.org/conda-forge/cpnest
+.. image:: https://anaconda.org/conda-forge/raynest/badges/version.svg
+   :target: https://anaconda.org/conda-forge/raynest
 
 If you use this software, please cite our DOI:
 
