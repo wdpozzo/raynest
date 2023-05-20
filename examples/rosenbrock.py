@@ -1,9 +1,7 @@
 #!/bin/usr/env python
 
-import unittest
 import numpy as np
 import raynest.model
-
 
 class RosenbrockModel(raynest.model.Model):
     """
@@ -25,19 +23,19 @@ class RosenbrockModel(raynest.model.Model):
         f = np.zeros(1, dtype = {'names':x.names, 'formats':['f8' for _ in x.names]})
         return f
 
-
-class RosenbrockTestCase(unittest.TestCase):
-    """
-    Test the Rosenbrock model
-    """
-    def setUp(self):
-        ndims = 2
-        model = RosenbrockModel(ndims)
-        self.work=raynest.raynest(model, verbose=2, nensemble=4, nlive=1000, maxmcmc=1000)
-
-    def test_run(self):
-        self.work.run()
-
-
 if __name__=='__main__':
-    unittest.main(verbosity=2)
+    model=RosenbrockModel(ndims = 2)
+    work=raynest.raynest(model,
+                         verbose=2,
+                         nnest=2,
+                         nensemble=2,
+                         nlive=100,
+                         maxmcmc=5000,
+                         nslice=0,
+                         nhamiltonian=0,
+                         seed = 1,
+                         resume=0,
+                         output='rosenbrock',
+                         periodic_checkpoint_interval=600)
+    work.run(corner = True)
+

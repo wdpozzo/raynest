@@ -1,6 +1,5 @@
 import logging
 from .utils import StreamHandler, LEVELS
-
 # Configure base logger for the raynest package - inherited by all loggers with
 # names prefixed by 'raynest'
 logger = logging.getLogger('raynest')
@@ -12,6 +11,7 @@ logger.addHandler(console_handler)
 # To change the console handler verbosity:
 #   from raynest import console_handler
 #   console_handler.set_verbosity(2)
+__version__="1.0.0"
 
 from .raynest import raynest
 

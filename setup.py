@@ -22,7 +22,7 @@ if have_cython:  # convert the pyx file to a .c file if cython is available
     print('Running cython')
     ext_modules = [Extension("raynest.parameter",
                              sources=[os.path.join("raynest", "parameter.pyx")],
-                             include_dirs=['cpnest', numpy.get_include()],
+                             include_dirs=['raynest', numpy.get_include()],
                              libraries=libraries,
                              extra_compile_args=["-O3","-ffast-math","-mavx2","-ftree-vectorize"])]
     ext_modules = cythonize(ext_modules)
@@ -31,7 +31,7 @@ else:
     # parameter.pyx) file
     ext_modules = [Extension("raynest.parameter",
                              sources=[os.path.join("raynest", "parameter.c")],
-                             include_dirs=['cpnest', numpy.get_include()],
+                             include_dirs=['raynest', numpy.get_include()],
                              libraries=libraries,
                              extra_compile_args=["-O3","-ffast-math","-mavx2","-ftree-vectorize"])]
 
@@ -47,7 +47,7 @@ with open("requirements.txt") as requires_file:
 
 setup(
         name='raynest',
-        use_scm_version=True,
+        version='1.0.0',
         description='raynest: Parallel nested sampling based on ray',
         long_description=long_description,
         author='Walter Del Pozzo, John Veitch',

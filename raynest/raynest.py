@@ -13,6 +13,7 @@ from .utils import LogFile
 LOGGER = logging.getLogger('raynest.raynest')
 import ray
 from ray.util import ActorPool
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 class CheckPoint(Exception):
     pass
@@ -59,13 +60,13 @@ class raynest(object):
         Default: 1
 
     nensemble: `int`
-        number of sampler threads using an ensemble samplers. Default: 1
+        total number of ensemble samplers. each nested sampler instance is assigned nensemble/nnest. Default: 1
 
     nhamiltonian: `int`
-        number of sampler threads using an hamiltonian samplers. Default: 0
+        ntotal number of hamitonian samplers. each nested sampler instance is assigned nhamiltonian/nnest. Default: 0
 
     nslice: `int`
-            number of sampler threads using an ensemble slice samplers. Default: 0
+        ntotal number of slice samplers. each nested sampler instance is assigned nslice/nnest. Default: 0
 
     resume: `boolean`
         determines whether raynest will resume a run or run from scratch. Default: False.
@@ -84,11 +85,6 @@ class raynest(object):
         Default: False
         If true, generates samples from the prior then terminates. Adjust `nlive` to control the number
         of samples requested.
-
-    n_periodic_checkpoint: `int`
-        **deprecated**
-        checkpoint the sampler every n_periodic_checkpoint iterations
-        Default: None (disabled)
 
     periodic_checkpoint_interval: `float`
         checkpoing the sampler every periodic_checkpoint_interval seconds
@@ -111,23 +107,17 @@ class raynest(object):
                  nhamiltonian = 0,
                  nslice       = 0,
                  resume       = False,
-                 proposals     = None,
-                 n_periodic_checkpoint = None,
+                 proposals    = None,
                  periodic_checkpoint_interval=None,
                  prior_sampling = False,
-                 object_store_memory=10**9,
-                 poolsize=None,
-                 nthreads=None
+                 object_store_memory=10**9
                  ):
 
         self.verbose   = verbose
         self.logger    = logging.getLogger('raynest.raynest.raynest')
         self.nsamplers = nensemble+nhamiltonian+nslice
         self.nnest     = nnest
-        if nthreads is not None and self.nsamplers == 0:
-            nensemble = nthreads
-            self.nsamplers = nensemble
-            self.logger.warning(f'DEPRECATION WARNING: nthreads is deprecated. Defaulting to use nensemble={nthreads}')
+
         assert self.nsamplers > 0, "no sampler processes requested!"
         import psutil
         self.max_threads = psutil.cpu_count()
@@ -176,12 +166,7 @@ class raynest(object):
                                 verbose=self.verbose)
 
         with self.log_file:
-            if poolsize is not None:
-                self.logger.warning('poolsize is a deprecated option and will \
-                                    be removed in a future version.')
-            if nthreads is not None:
-                self.logger.warning('nthreads is a deprecated option and will\
-                                    be removed in a future verison.')
+
             if self.verbose:
                 self.logger.info('Running with {0} parallel threads'.format(self.nthreads))
                 self.logger.info('Nested samplers: {0}'.format(nnest))
@@ -190,11 +175,6 @@ class raynest(object):
                 self.logger.info('Hamiltonian samplers: {0}'.format(nhamiltonian))
                 self.logger.info('ray object store size: {0} GB'.format(object_store_memory/1e9))
 
-            if n_periodic_checkpoint is not None:
-                self.logger.critical(
-                    "The n_periodic_checkpoint kwarg is deprecated, "
-                    "use periodic_checkpoint_interval instead."
-                )
             if periodic_checkpoint_interval is None:
                 self.periodic_checkpoint_interval = np.inf
             else:
@@ -232,14 +212,15 @@ class raynest(object):
                     s0 = next(self.seed)
                     rng = np.random.default_rng(s0)
 
-                pg = placement_group([{"CPU": 1+self.nsamplers//self.nnest}],strategy="STRICT_PACK")
+                pg = placement_group([{"CPU": 1+self.nsamplers//self.nnest}],strategy="PACK")
                 ray.get(pg.ready())
                 
                 self.resume_file.append(os.path.join(checkpoint_folder, "nested_sampler_resume_{}.pkl".format(j)))
                 
                 if not os.path.exists(self.resume_file[j]) or resume == False:
                     
-                    self.ns_pool.append(ray.remote(NestedSampler).options(placement_group=pg).remote(
+                    self.ns_pool.append(ray.remote(NestedSampler).options(scheduling_strategy=PlacementGroupSchedulingStrategy(
+        placement_group=pg)).remote(
                                 self.user,
                                 nthreads       = self.nsamplers,
                                 nlive          = nlive,
@@ -252,7 +233,8 @@ class raynest(object):
                                 position = j))
                 else:
                     state = self.load_nested_sampler_state(self.resume_file[j])
-                    ns = ray.remote(NestedSampler).options(placement_group=pg).remote(
+                    ns = ray.remote(NestedSampler).options(scheduling_strategy=PlacementGroupSchedulingStrategy(
+        placement_group=pg)).remote(
                                 self.user,
                                 nthreads       = self.nsamplers,
                                 nlive          = nlive,
@@ -274,7 +256,8 @@ class raynest(object):
                     if self.seed is not None:
                         rng = np.random.default_rng(next(self.seed))
                     
-                    S = MetropolisHastingsSampler.options(placement_group=pg).remote(self.user,
+                    S = MetropolisHastingsSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
+        placement_group=pg)).remote(self.user,
                                           maxmcmc,
                                           rng         = rng,
                                           verbose     = self.verbose,
@@ -287,7 +270,8 @@ class raynest(object):
                     if self.seed is not None:
                         rng = np.random.default_rng(next(self.seed))
                         
-                    S = HamiltonianMonteCarloSampler.options(placement_group=pg).remote(self.user,
+                    S = HamiltonianMonteCarloSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
+        placement_group=pg)).remote(self.user,
                                           maxmcmc,
                                           rng         = rng,
                                           verbose     = self.verbose,
@@ -300,7 +284,8 @@ class raynest(object):
                     if self.seed is not None:
                         rng = np.random.default_rng(next(self.seed))
                         
-                    S = SliceSampler.options(placement_group=pg).remote(self.user,
+                    S = SliceSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
+        placement_group=pg)).remote(self.user,
                                           maxmcmc,
                                           rng         = rng,
                                           verbose     = self.verbose,
@@ -317,9 +302,19 @@ class raynest(object):
 
             self.results['combined'] = {}
 
-    def run(self):
+    def run(self,
+            postprocess = True,
+            plot        = True,
+            corner      = False):
         """
         Run the sampler
+        ===============
+        kwargs:
+        postprocess: generates and saves posterior samples. default = True
+        
+        plot: generates summary plots. default = True
+        
+        corner: generates a summary corner plot. Warning! in large dimansional spaces this might take a while. default = False
         """
         with self.log_file:
             if self.resume:
@@ -502,10 +497,10 @@ class raynest(object):
                              labels=self.prior_samples.dtype.names,
                              filename=os.path.join(self.output,'corner.pdf'))
 
-        lps = ray.get([self.ns_pool[v].get_live_points.remote() for v in range(self.nnest)])
-
-        for i,lp in enumerate(lps):
-            plot.plot_indices(lp.get_insertion_indices(), filename=os.path.join(self.output, 'insertion_indices_{}.pdf'.format(i)))
+        live_points = ray.get([self.ns_pool[v].get_live_points.remote() for v in range(self.nnest)])
+        
+        for i in range(self.nnest):
+            plot.plot_indices(live_points[i].get_insertion_indices(), filename=os.path.join(self.output, 'insertion_indices_{}.pdf'.format(i)))
 
     def checkpoint(self):
         """
