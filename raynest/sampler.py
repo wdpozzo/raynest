@@ -196,14 +196,33 @@ class MetropolisHastingsSampler(Sampler):
         # return the new sample
         return (sub_counter, oldparam)
 
+
+from .figaro_gradient import ADPGMM
 @ray.remote
 class HamiltonianMonteCarloSampler(Sampler):
     """
     HamiltonianMonteCarlo acceptance rule
     for :obj:`raynest.proposal.HamiltonianProposal`
     """
-    def return_sample(self, oldparam, logLmin):
+    initialised = False
+    density     = None
+    
+    def set_ensemble(self, ensemble_ref):
 
+        ensemble = ray.get(ensemble_ref)[0]
+        # compute the covariance
+        ensemble.update_mean_covariance()
+        covariance = ensemble.get_covariance()
+            
+        self.density  = ADPGMM(self.model.bounds, probit = False)
+        for e in ensemble._list:
+            self.density.add_new_point(e.values)
+            
+        self.proposal.set_ensemble((self.density, covariance))
+        return 0
+    
+    def return_sample(self, oldparam, logLmin):
+        
         sub_accepted    = 0
         sub_counter     = 0
 
@@ -224,19 +243,18 @@ class HamiltonianMonteCarloSampler(Sampler):
             if sub_counter >= self.Nmcmc and sub_accepted > 0:
                 break
 
-            if sub_counter >= self.maxmcmc:
-                break
+#            if sub_counter >= self.maxmcmc:
+#                break
 
         self.sub_acceptance = float(sub_accepted)/float(sub_counter)
         self.mcmc_accepted += sub_accepted
         self.mcmc_counter  += sub_counter
         self.acceptance     = float(self.mcmc_accepted)/float(self.mcmc_counter)
 
-#        for p in self.proposal.proposals:
-##            p.update_time_step(self.acceptance)
-#            p.update_trajectory_length(safety=10)
+        self.density.add_new_point(oldparam.values)
+        
         return (sub_counter, oldparam)
-
+         
 @ray.remote
 class SliceSampler(Sampler):
     """
