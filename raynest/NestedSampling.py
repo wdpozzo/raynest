@@ -309,7 +309,7 @@ class NestedSampler(object):
                 l.append(p)
                 pbar.update()
         
-        self.live_points = LivePoints(l, self.rng,  n_replace = self.nthreads)
+        self.live_points = LivePoints(l, self.rng, n_replace = self.nthreads)
 
     def setup_output(self, output):
         """
@@ -371,7 +371,7 @@ class NestedSampler(object):
         
         # set up the ensemble statistics
         if (self.iteration % (self.nlive//10)) < self.nthreads:
-            lpp = LivePoints(self.live_points._list, self.rng,  n_replace = self.nthreads)
+            lpp = LivePoints(self.live_points._list, self.rng, n_replace = self.nthreads)
             lp = ray.put(lpp)
             for s in pool.map(lambda a, v: a.set_ensemble.remote([lp]), range(self.nthreads)):
                 pass
@@ -414,7 +414,7 @@ class NestedSampler(object):
         sampling them from the `raynest.model.log_prior` distribution
         """
         # set up  the ensemble statistics
-        lpp = LivePoints(self.live_points._list, self.rng,  n_replace = self.nthreads)
+        lpp = LivePoints(self.live_points._list, self.rng, n_replace = self.nthreads)
         lp = ray.put(lpp)
         
         for s in pool.map(lambda a, v: a.set_ensemble.remote([lp]), range(self.nthreads)):
