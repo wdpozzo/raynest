@@ -197,7 +197,10 @@ class MetropolisHastingsSampler(Sampler):
         return (sub_counter, oldparam)
 
 
-from .figaro_gradient import ADPGMM
+try:
+    from .figaro_gradient import ADPGMM
+except:
+    print("Warning! figaro package not available, the HMC sampler will not be available")
 @ray.remote
 class HamiltonianMonteCarloSampler(Sampler):
     """
