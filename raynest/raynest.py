@@ -117,7 +117,7 @@ class raynest(object):
         self.logger    = logging.getLogger('raynest.raynest.raynest')
         self.nsamplers = nensemble+nhamiltonian+nslice
         self.nnest     = nnest
-
+        
         assert self.nsamplers > 0, "no sampler processes requested!"
         import psutil
         self.max_threads = psutil.cpu_count()
@@ -136,17 +136,15 @@ class raynest(object):
         self.ns_pool = []
         self.pool    = []
 
-        if not ray.is_initialized():
-            self.existing_cluster = False
+        try:
+            ray.init(address='auto')
+            self.existing_cluster = True
+        except:
             ray.init(num_cpus=self.nthreads,
                      ignore_reinit_error=True,
                      object_store_memory=object_store_memory)
-        else:
-            self.existing_cluster = True
-            ray.init(address='auto',
-                     ignore_reinit_error=True,
-                     object_store_memory=object_store_memory)
-
+            self.existing_cluster = False
+                     
         assert ray.is_initialized() == True
         output = os.path.join(output, '')
         checkpoint_folder = os.path.join(output,'checkpoints')
