@@ -1,4 +1,10 @@
-from figaro.mixture import DPGMM
+try:
+    from figaro.mixture import DPGMM
+    from figaro.likelihood import log_norm
+except:
+    print("FIGARO not available! Hamiltonian Monte Carlo sampling not supported!")
+    pass
+
 import numpy as np
 from tqdm import tqdm
 from scipy.stats import multivariate_normal as mn
@@ -17,8 +23,8 @@ class ADPGMM(DPGMM):
         Returns:
             :np.ndarray: comp.pdf(x)
         """
-        return np.array([w*mn(comp.mu, comp.sigma).pdf(x) for comp, w in zip(self.mixture, self.w)])
-    
+        return np.array([w*np.exp(log_norm(x[0], comp.mu, comp.sigma)) for comp, w in zip(self.mixture, self.w)])
+
     def _log_gradient(self, x):
         """
         Returns the log gradient of the mixture

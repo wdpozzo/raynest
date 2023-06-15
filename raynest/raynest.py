@@ -144,7 +144,6 @@ class raynest(object):
         else:
             self.existing_cluster = True
             ray.init(address='auto',
-                     num_cpus=self.nthreads,
                      ignore_reinit_error=True,
                      object_store_memory=object_store_memory)
 

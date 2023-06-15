@@ -47,7 +47,7 @@ with open("requirements.txt") as requires_file:
 
 setup(
         name='raynest',
-        version='1.0.0',
+        version='1.0.2',
         description='raynest: Parallel nested sampling based on ray',
         long_description=long_description,
         author='Walter Del Pozzo, John Veitch',

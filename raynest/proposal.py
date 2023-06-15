@@ -371,8 +371,8 @@ class HamiltonianProposal(EnsembleProposal):
         self.V                      = self.model.potential
         self.prior_bounds           = self.model.bounds
         self.dimension              = len(self.prior_bounds)
-        self.dt                     = 0.03
-        self.leaps                  = 20
+        self.dt                     = 0.3
+        self.leaps                  = 100
         self.maxleaps               = 1000
         self.DEBUG                  = 0
         self.trajectories           = []
@@ -745,3 +745,54 @@ class ConstrainedLeapFrog(HamiltonianProposal):
             f.write(repr(q.logP)+'\t'+repr(q.logL)+'\t'+repr(logLmin)+'\n')
         f.close()
         if self.c == 3: exit()
+
+class NoUTurn(ConstrainedLeapFrog):
+    def build_tree(theta, r, grad, v, j, epsilon, f, joint0):
+        """The main recursion."""
+        if (j == 0):
+            # Base case: Take a single leapfrog step in the direction v.
+            thetaprime, rprime, gradprime, logpprime = leapfrog(theta, r, grad, v * epsilon, f)
+            jointprime = logpprime - 0.5 * np.dot(rprime, rprime.T)
+            # Is the simulation wildly inaccurate?
+            sprime = jointprime - joint0 > -1000
+            # Set the return values---minus=plus for all things here, since the
+            # "tree" is of depth 0.
+            thetaminus = thetaprime[:]
+            thetaplus = thetaprime[:]
+            rminus = rprime[:]
+            rplus = rprime[:]
+            gradminus = gradprime[:]
+            gradplus = gradprime[:]
+            logptree = jointprime - joint0
+            #logptree = logpprime
+            # Compute the acceptance probability.
+            alphaprime = min(1., np.exp(jointprime - joint0))
+            #alphaprime = min(1., np.exp(logpprime - 0.5 * np.dot(rprime, rprime.T) - joint0))
+            nalphaprime = 1
+        else:
+            # Recursion: Implicitly build the height j-1 left and right subtrees.
+            thetaminus, rminus, gradminus, thetaplus, rplus, gradplus, thetaprime, gradprime, logpprime, sprime, alphaprime, nalphaprime, logptree = build_tree(theta, r, grad, v, j - 1, epsilon, f, joint0)
+            # No need to keep going if the stopping criteria were met in the first subtree.
+            if sprime:
+                if v == -1:
+                    thetaminus, rminus, gradminus, _, _, _, thetaprime2, gradprime2, logpprime2, sprime2, alphaprime2, nalphaprime2, logptree2 = build_tree(thetaminus, rminus, gradminus, v, j - 1, epsilon, f, joint0)
+                else:
+                    _, _, _, thetaplus, rplus, gradplus, thetaprime2, gradprime2, logpprime2, sprime2, alphaprime2, nalphaprime2, logptree2 = build_tree(thetaplus, rplus, gradplus, v, j - 1, epsilon, f, joint0)
+                # Conpute total probability of this trajectory
+                logptot = np.logaddexp(logptree, logptree2)
+                # Choose which subtree to propagate a sample up from.
+                if np.log(np.random.uniform()) < logptree2 - logptot:
+                    thetaprime = thetaprime2[:]
+                    gradprime = gradprime2[:]
+                    logpprime = logpprime2
+                logptree = logptot
+                # Update the stopping criterion.
+                sprime = sprime and sprime2 and stop_criterion(thetaminus, thetaplus, rminus, rplus)
+                # Update the acceptance probability statistics.
+                alphaprime = alphaprime + alphaprime2
+                nalphaprime = nalphaprime + nalphaprime2
+
+        return thetaminus, rminus, gradminus, thetaplus, rplus, gradplus, thetaprime, gradprime, logpprime, sprime, alphaprime, nalphaprime, logptree
+
+def tree_sample(theta, logp, r0, grad, epsilon, f, joint, maxheight=np.inf):
+    pass
