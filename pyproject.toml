@@ -1,0 +1,47 @@
+[build-system]
+requires = [
+    "oldest-supported-numpy",
+    "setuptools>=42",
+    "wheel",
+    "build",
+    "cython",
+    ]
+
+build-backend = "setuptools.build_meta"
+
+[project]
+name = 'raynest'
+description = 'raynest: Parallel nested sampling based on ray'
+version = '1.0.2'
+requires-python = '> 3.6'
+readme = {file = "README.rst", content-type = "text"}
+license = {file = "LICENSE"}
+keywords = ['nested', 'sampling', 'bayesian', 'inference']
+authors = [
+  {name = "Walter Del Pozzo", email = "walter.delpozzo@ligo.org"},
+  {name = "John Veitch", email = "john.veitch@ligo.org"}
+  ]
+
+classifiers=[
+    'Development Status :: 4 - Beta',
+    'License :: OSI Approved :: MIT License',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.6',
+    'Programming Language :: Python :: 3.7',
+    'Programming Language :: Python :: 3.8'
+    ]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "corner",
+    "tqdm",
+    "matplotlib",
+    "ray",
+    "h5py",
+    "dill",
+    "figaro",
+]
+
+[project.urls]
+Repository = "https://github.com/wdpozzo/raynest.git"
