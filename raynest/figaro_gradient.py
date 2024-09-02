@@ -1,6 +1,6 @@
 try:
     from figaro.mixture import DPGMM
-    from figaro.likelihood import log_norm
+    from figaro._likelihood import log_norm
 except:
     print("FIGARO not available! Hamiltonian Monte Carlo sampling not supported!")
     pass
