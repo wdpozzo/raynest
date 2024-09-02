@@ -114,6 +114,10 @@ class raynest(object):
                  ):
 
         self.verbose   = verbose
+        if self.verbose > 0:
+            self.log_level = logging.INFO
+        else:
+            self.log_level = logging.WARNING
         self.logger    = logging.getLogger('raynest.raynest.raynest')
         self.nsamplers = nensemble+nhamiltonian+nslice
         self.nnest     = nnest
@@ -137,12 +141,17 @@ class raynest(object):
         self.pool    = []
 
         try:
-            ray.init(address='auto')
+            ray.init(address='auto',
+                     logging_level = self.log_level,
+                     ignore_reinit_error = True
+                     )
             self.existing_cluster = True
-        except:
+        except ConnectionError:
             ray.init(num_cpus=self.nthreads,
                      ignore_reinit_error=True,
-                     object_store_memory=object_store_memory)
+                     object_store_memory=object_store_memory,
+                     logging_level = self.log_level,
+                     )
             self.existing_cluster = False
                      
         assert ray.is_initialized() == True
@@ -335,7 +344,8 @@ class raynest(object):
                 if self.existing_cluster is False:
                     ray.shutdown()
                 assert ray.is_initialized() == False
-                self.logger.critical("ray correctly shut down. exiting")
+                if self.verbose > 0:
+                    self.logger.critical("ray correctly shut down. exiting")
                 sys.exit(130)
 
             if self.verbose > 0:
@@ -365,7 +375,8 @@ class raynest(object):
             if self.existing_cluster is False:
                 ray.shutdown()
                 assert ray.is_initialized() == False
-                self.logger.critical("ray correctly shut down. exiting")
+                if self.verbose > 0:
+                    self.logger.critical("ray correctly shut down. exiting")
 
     def postprocess(self, filename=None):
         """
