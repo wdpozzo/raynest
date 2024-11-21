@@ -55,4 +55,4 @@ if __name__=='__main__':
                        resume=0, periodic_checkpoint_interval=600)
     work.run()
     print("analytic logZ = {0}".format(model.analytic_log_Z))
-    print("estimated logZ = {0} \pm {1}".format(work.logZ,work.logZ_error))
+    print("estimated logZ = {0} +- {1}".format(work.logZ,work.logZ_error))

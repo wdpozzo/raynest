@@ -15,7 +15,7 @@ walter.delpozzo@ligo.org,
 john.veitch@ligo.org
 
 raynest is a python module for performing Bayesian Inference.
-Documentation at `GitHub Pages <https://wdpozzo.github.io/cpnest/>`_.
+Documentation at `GitHub Pages <https://wdpozzo.github.io/raynest/>`_.
 
 The latest release is available from pip and conda
 
