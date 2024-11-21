@@ -197,15 +197,12 @@ class MetropolisHastingsSampler(Sampler):
         return (sub_counter, oldparam)
 
 
-try:
-    from .figaro_gradient import ADPGMM
-except:
-    print("Warning! figaro package not available, the HMC sampler will not be available")
 @ray.remote
 class HamiltonianMonteCarloSampler(Sampler):
     """
     HamiltonianMonteCarlo acceptance rule
     for :obj:`raynest.proposal.HamiltonianProposal`
+    WARNING: this is not working properly quite yet
     """
     initialised = False
     density     = None

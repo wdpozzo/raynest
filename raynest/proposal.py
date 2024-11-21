@@ -222,6 +222,48 @@ class EnsembleWalk(EnsembleProposal):
             out += (x - center_of_mass)*self.rng.standard_normal()
         return out
 
+class EnsembleModifiedWalk(EnsembleProposal):
+    """
+    The Ensemble "walk" move from Goodman & Weare
+    http://dx.doi.org/10.2140/camcos.2010.5.65
+    modified as in https://arxiv.org/pdf/2411.00276
+    """
+    log_J = 0.0 # Symmetric proposal
+    Npoints = 3
+    tj = -1.0
+    tk = +1.0
+    
+    def lagrange_weights(self, x, x0, x1, x2):
+        return (x-x1)/(x0-x1) * (x-x2)/(x0-x2)
+        
+    def get_sample(self,old):
+        """
+        Parameters
+        ----------
+        old : :obj:`raynest.parameter.LivePoint`
+
+        Returns
+        ----------
+        out: :obj:`raynest.parameter.LivePoint`
+        """
+        subset_1 = self.ensemble.sample(self.Npoints)
+        center_of_mass_1 = reduce(type(old).__add__,subset_1)/float(self.Npoints)
+        subset_2 = self.ensemble.sample(self.Npoints)
+        center_of_mass_2 = reduce(type(old).__add__,subset_2)/float(self.Npoints)
+        
+        ti   = self.rng.standard_normal()
+        tNew = self.rng.standard_normal()
+        
+        wi = self.lagrange_weights(tNew,ti,self.tj,self.tk);
+        wj = self.lagrange_weights(tNew,self.tj,self.tk,ti);
+        wk = self.lagrange_weights(tNew,self.tk,ti,self.tj);
+        
+        out = old.copy()
+        out.values = wi*old.values + wj*center_of_mass_1.values + wk*center_of_mass_2.values
+        # Jacobian
+        self.log_J = out.dimension * np.log(np.abs(wi))
+        return out
+
 class EnsembleStretch(EnsembleProposal):
     """
     The Ensemble "stretch" move from Goodman & Weare
@@ -248,6 +290,36 @@ class EnsembleStretch(EnsembleProposal):
         self.log_J = out.dimension * x
         return out
 
+class EnsembleModifiedStretch(EnsembleProposal):
+    """
+    The Ensemble "stretch" move from Goodman & Weare
+    http://dx.doi.org/10.2140/camcos.2010.5.65
+    modified as in https://arxiv.org/pdf/2411.00276
+    """
+    def get_sample(self,old):
+        """
+        Parameters
+        ----------
+        old : :obj:`raynest.parameter.LivePoint`
+
+        Returns
+        ----------
+        out: :obj:`raynest.parameter.LivePoint`
+        """
+        scale  = 2.0 # Will stretch factor in (1/scale,scale)
+        # Pick a random point to move toward
+        a, b   = self.ensemble.sample(2)
+        c      = self.rng.uniform(-1,1)
+        r_star = c*a.values+(1-c)*b.values
+        # Pick the scale factor
+        x = self.rng.uniform(-1,1)*np.log(scale)
+        Z = exp(x)
+        out = old.copy()
+        out.values = Z*old.values + (1-Z)*r_star
+        # Jacobian
+        self.log_J = out.dimension * x
+        return out
+        
 class DifferentialEvolution(EnsembleProposal):
     """
     Differential evolution move:
@@ -316,6 +388,37 @@ class EnsembleEigenVector(EnsembleProposal):
         out.values += jumpsize*self.eigen_vectors[:,i]
         return out
 
+class EnsembleQuadratic(EnsembleProposal):
+
+    tj = -1.0
+    tk = +1.0
+    
+    def lagrange_weights(self, x, x0, x1, x2):
+        return (x-x1)/(x0-x1) * (x-x2)/(x0-x2)
+
+    def get_sample(self,old):
+        """
+        Propose a jump using the quadratic move in Militzer (2023a)
+        ----------
+        old : :obj:`raynest.parameter.LivePoint`
+
+        Returns
+        ----------
+        out: :obj:`raynest.parameter.LivePoint`
+        """
+        a, b = self.ensemble.sample(2)
+
+        ti   = self.rng.standard_normal()
+        tNew = self.rng.standard_normal()
+        
+        wi = self.lagrange_weights(tNew,ti,self.tj,self.tk);
+        wj = self.lagrange_weights(tNew,self.tj,self.tk,ti);
+        wk = self.lagrange_weights(tNew,self.tk,ti,self.tj);
+        out = old.copy()
+        out.values = wi*old.values + wj*a.values + wk*b.values
+        # Jacobian
+        self.log_J = out.dimension * np.log(np.abs(wi))
+        return out
 
 class DefaultProposalCycle(ProposalCycle):
     """
@@ -327,14 +430,20 @@ class DefaultProposalCycle(ProposalCycle):
     def __init__(self, rng, *args, **kwargs):
 
         proposals = [EnsembleWalk(rng),
+                     EnsembleModifiedWalk(rng),
                      EnsembleStretch(rng),
+                     EnsembleModifiedStretch(rng),
+                     EnsembleQuadratic(rng),
                      DifferentialEvolution(rng),
                      EnsembleEigenVector(rng)]
-        weights = [5,
+        weights = [3,
+                   1,
+                   3,
                    1,
                    5,
+                   3,
                    10]
-                   
+
         super(DefaultProposalCycle,self).__init__(proposals, weights, rng)
 
 class HamiltonianProposalCycle(ProposalCycle):

@@ -51,7 +51,7 @@ if __name__=='__main__':
 #    unittest.main(verbosity=2)
     model=GaussianModel(dim = 50)
     work=raynest.raynest(model, verbose=2,
-                       nnest=2, nensemble=2, nlive=1000, maxmcmc=5000, nslice=0, nhamiltonian=0, seed = 1,
+                       nnest=1, nensemble=3, nlive=1000, maxmcmc=5000, nslice=0, nhamiltonian=0, seed = 1,
                        resume=0, periodic_checkpoint_interval=600)
     work.run()
     print("analytic logZ = {0}".format(model.analytic_log_Z))
