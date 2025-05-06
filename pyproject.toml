@@ -30,7 +30,9 @@ dependencies = [
     "matplotlib",
     "ray",
     "h5py",
-    "dill"
+    "dill",
+    "psutil",
+    "setuptools"
 ]
 
 [project.urls]
