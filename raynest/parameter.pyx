@@ -4,7 +4,7 @@
 # cython: language_level=3, boundscheck=False, wraparound=False, binding=True, embedsignature=True
 
 from __future__ import division
-from numpy.math cimport INFINITY
+from libc.math cimport INFINITY
 cimport numpy as np
 np.import_array()
 import numpy as np
