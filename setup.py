@@ -12,7 +12,7 @@ ext_modules = [Extension("raynest.parameter",
                          sources=[os.path.join("raynest", "parameter.pyx")],
                          include_dirs=['raynest', numpy.get_include()],
                          libraries=libraries,
-                         extra_compile_args=["-O3","-ffast-math","-mavx2","-ftree-vectorize"])]
+                         extra_compile_args=["-O3","-ffast-math","-ftree-vectorize"])]
 ext_modules = cythonize(ext_modules)
 
 setup(url="https://github.com/wdpozzo/raynest",  # Replace with your package URL
