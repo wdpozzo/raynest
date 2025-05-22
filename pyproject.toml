@@ -1,39 +1,39 @@
 [build-system]
 requires = [
-    "numpy",
-    "setuptools>=42",
-    "wheel",
-    "build",
-    "cython"
-    ]
-
+  "setuptools>=61.0",
+  "wheel",
+  "cython",
+  "numpy"
+]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = 'raynest'
-description = 'raynest: Parallel nested sampling based on ray'
-version = '1.0.6'
-requires-python = '> 3.9'
+name = "raynest"
+description = "raynest: Parallel nested sampling based on ray"
+version = "1.1.1"
+requires-python = ">=3.9"
 readme = {file = "README.rst", content-type = "text/plain"}
 license = {file = "LICENSE"}
-keywords = ['nested', 'sampling', 'bayesian', 'inference']
+keywords = ["nested", "sampling", "bayesian", "inference"]
 authors = [
   {name = "Walter Del Pozzo", email = "walter.delpozzo@ligo.org"},
   {name = "John Veitch", email = "john.veitch@ligo.org"}
-  ]
-
+]
 dependencies = [
-    "numpy",
-    "scipy",
-    "corner",
-    "tqdm",
-    "matplotlib",
-    "ray",
-    "h5py",
-    "dill",
-    "psutil",
-    "setuptools"
+  "numpy",
+  "scipy",
+  "corner",
+  "tqdm",
+  "matplotlib",
+  "ray",
+  "h5py",
+  "psutil",
+  "setuptools"
 ]
 
 [project.urls]
-Repository = "https://github.com/wdpozzo/raynest.git"
+Homepage = "https://github.com/wdpozzo/raynest"
+Repository = "https://github.com/wdpozzo/raynest"
+
+[tool.setuptools.packages.find]
+where = ["raynest"]

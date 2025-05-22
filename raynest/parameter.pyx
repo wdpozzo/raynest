@@ -4,7 +4,6 @@
 # cython: language_level=3, boundscheck=False, wraparound=False, binding=True, embedsignature=True
 
 from __future__ import division
-from libc.math cimport INFINITY
 cimport numpy as np
 np.import_array()
 import numpy as np
@@ -28,8 +27,8 @@ cdef class LivePoint:
     def __cinit__(self,
                   list names,
                   np.ndarray d=None,
-                  double logL=-INFINITY,
-                  double logP=-INFINITY):
+                  double logL=-np.inf,
+                  double logP=-np.inf):
         self.logL = logL
         self.logP = logP
         self.names = names
