@@ -16,10 +16,10 @@ __version__="1.0.2"
 from .raynest import raynest
 
 # Get the version number from git tag
-from pkg_resources import get_distribution, DistributionNotFound
+from importlib.metadata import distribution, PackageNotFoundError
 try:
-    __version__ = get_distribution(__name__).version
-except DistributionNotFound:
+    __version__ = distribution(__name__).version
+except PackageNotFoundError:
     # package is not installed
     __version__ = "dev"
 

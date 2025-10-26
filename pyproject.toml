@@ -23,17 +23,14 @@ dependencies = [
   "numpy",
   "scipy",
   "corner",
+  "dill",
   "tqdm",
   "matplotlib",
   "ray",
   "h5py",
   "psutil",
-  "setuptools"
 ]
 
 [project.urls]
 Homepage = "https://github.com/wdpozzo/raynest"
 Repository = "https://github.com/wdpozzo/raynest"
-
-[tool.setuptools.packages.find]
-where = ["raynest"]
