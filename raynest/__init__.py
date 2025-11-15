@@ -11,7 +11,7 @@ logger.addHandler(console_handler)
 # To change the console handler verbosity:
 #   from raynest import console_handler
 #   console_handler.set_verbosity(2)
-__version__="1.0.2"
+__version__="1.1.2"
 
 from .raynest import raynest
 

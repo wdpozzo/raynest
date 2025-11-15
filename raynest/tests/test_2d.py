@@ -9,7 +9,7 @@ class GaussianModel(raynest.model.Model):
     def __init__(self):
         pass
     names=['x','y']
-    bounds=[[-10,10],[-10,10]]
+    bounds=[[-5,5],[-5,5]]
     analytic_log_Z=0.0 - np.log(bounds[0][1]-bounds[0][0]) - np.log(bounds[1][1]-bounds[1][0])
 
     def log_likelihood(self,p):
