@@ -33,6 +33,7 @@ cdef class LivePoint:
         self.logP = logP
         self.names = names
         self.dimension = len(names)
+        self.name_to_index = {name: i for i, name in enumerate(names)}
         if d is not None:
             self.values             = np.array(d, dtype=np.float64)
         else:
@@ -109,19 +110,10 @@ cdef class LivePoint:
         return self.dimension
     
     def __getitem__(LivePoint self, str name):
-        cdef Py_ssize_t i
-        for i in range(self.dimension):
-            if self.names[i] == name:
-                return self.values[i]
-        raise KeyError
+        return self.values[self.name_to_index[name]]
 
     def __setitem__(LivePoint self, str name, double value):
-        cdef Py_ssize_t i
-        for i in range(self.dimension):
-            if self.names[i] == name:
-                self.values[i] = value
-                return
-        raise KeyError
+        self.values[self.name_to_index[name]] = value
     
     def copy(LivePoint self):
         return self._copy()

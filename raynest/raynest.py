@@ -126,10 +126,10 @@ class raynest(object):
         import psutil
         self.max_threads = psutil.cpu_count()
 
-        if self.nsamplers%self.nnest != 0:
-            self.logger.warning("Error! Number of samplers not balanced")
-            self.logger.warning("to the number of nested samplers! Exiting.")
-            exit(-1)
+        #if self.nsamplers%self.nnest != 0:
+        #    self.logger.warning("Error! Number of samplers not balanced")
+        #    self.logger.warning("to the number of nested samplers! Exiting.")
+        #    exit(-1)
 
         self.nthreads = self.nsamplers+self.nnest
 

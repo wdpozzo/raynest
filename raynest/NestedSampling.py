@@ -371,9 +371,8 @@ class NestedSampler(object):
         
         # set up the ensemble statistics
         if (self.iteration % (self.nlive//10)) < self.nthreads:
-            lpp = LivePoints(self.live_points._list, self.rng, n_replace = self.nthreads)
-            lp = ray.put(lpp)
-            for s in pool.map(lambda a, v: a.set_ensemble.remote([lp]), range(self.nthreads)):
+
+            for s in pool.map(lambda a, v: a.set_ensemble.remote(self.live_points), range(self.nthreads)):
                 pass
             
         starting_points = self.live_points.sample(self.nthreads)
@@ -414,10 +413,8 @@ class NestedSampler(object):
         sampling them from the `raynest.model.log_prior` distribution
         """
         # set up  the ensemble statistics
-        lpp = LivePoints(self.live_points._list, self.rng, n_replace = self.nthreads)
-        lp = ray.put(lpp)
         
-        for s in pool.map(lambda a, v: a.set_ensemble.remote([lp]), range(self.nthreads)):
+        for s in pool.map(lambda a, v: a.set_ensemble.remote(self.live_points), range(self.nthreads)):
             pass
         
         # send all live points to the samplers for start
@@ -456,8 +453,8 @@ class NestedSampler(object):
             self.reset(pool)
         else:
             self.logger.info("Nested Sampling process {0!s}, restoring samplers".format(os.getpid()))
-            lp_ref = ray.put(self.live_points)
-            for s in pool.map(lambda a, v: a.set_ensemble.remote([lp_ref]), range(self.nthreads)):
+
+            for s in pool.map(lambda a, v: a.set_ensemble.remote(self.live_points), range(self.nthreads)):
                 pass
 
         if self.prior_sampling:
