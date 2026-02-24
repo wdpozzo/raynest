@@ -6,10 +6,18 @@ from abc import ABCMeta,abstractmethod
 from scipy.stats import multivariate_normal
 from scipy.special import logsumexp
 from .nest2pos import acl
-from .parameter import LivePoint
-from .NestedSampling import LivePoints
 import ray
-    
+
+def update_mean_covariance(ensemble):
+    """
+    Recompute mean and covariance matrix
+    of the ensemble of Live points
+    """
+    covariance = np.atleast_2d(np.cov(ensemble))
+    mean       = np.mean(ensemble,axis=1)
+    eigen_values, eigen_vectors = np.linalg.eigh(covariance)
+    return mean, covariance, eigen_values, eigen_vectors
+
 class Proposal(object):
     """
     Base abstract class for jump proposals
@@ -132,7 +140,7 @@ class EnsembleSlice(EnsembleProposal):
         mean and covariance matrix are recomputed when it is updated
         """
         super(EnsembleSlice,self).set_ensemble(ensemble)
-        self.mean, self.covariance = ensemble.get_mean_covariance()
+        self.mean, self.covariance, self.eigen_values, self.eigen_vectors = update_mean_covariance(ensemble.T)
         
 class EnsembleSliceDifferential(EnsembleSlice):
     """
@@ -144,8 +152,8 @@ class EnsembleSliceDifferential(EnsembleSlice):
         """
         Draws two random points and returns their direction
         """
-        subset = self.ensemble.sample(2)
-        direction = reduce(LivePoint.__sub__,subset)
+        idx = self.rng.integers(low=0, high=self.ensemble.shape[0], size=2)
+        direction = self.ensemble[idx[0]]-self.ensemble[idx[1]]
         return direction * mu
 
 class EnsembleSliceCorrelatedGaussian(EnsembleSlice):
@@ -215,10 +223,10 @@ class EnsembleWalk(EnsembleProposal):
         ----------
         out: :obj:`raynest.parameter.LivePoint`
         """
-        subset = self.ensemble.sample(self.Npoints)
-        center_of_mass = reduce(type(old).__add__,subset)/float(self.Npoints)
+        idx = self.rng.integers(low=0, high=self.ensemble.shape[0], size=self.Npoints)
+        center_of_mass = np.sum(self.ensemble[idx], axis=0)/float(self.Npoints)
         out = old
-        for x in subset:
+        for x in self.ensemble[idx]:
             out += (x - center_of_mass)*self.rng.standard_normal()
         return out
 
@@ -246,10 +254,10 @@ class EnsembleModifiedWalk(EnsembleProposal):
         ----------
         out: :obj:`raynest.parameter.LivePoint`
         """
-        subset_1 = self.ensemble.sample(self.Npoints)
-        center_of_mass_1 = reduce(type(old).__add__,subset_1)/float(self.Npoints)
-        subset_2 = self.ensemble.sample(self.Npoints)
-        center_of_mass_2 = reduce(type(old).__add__,subset_2)/float(self.Npoints)
+        idx = self.rng.integers(low=0, high=self.ensemble.shape[0], size=self.Npoints)
+        center_of_mass_1 = np.sum(self.ensemble[idx], axis=0)/float(self.Npoints)
+        idx = self.rng.integers(low=0, high=self.ensemble.shape[0], size=self.Npoints)
+        center_of_mass_2 = np.sum(self.ensemble[idx], axis=0)/float(self.Npoints)
         
         ti   = self.rng.standard_normal()
         tNew = self.rng.standard_normal()
@@ -259,9 +267,9 @@ class EnsembleModifiedWalk(EnsembleProposal):
         wk = self.lagrange_weights(tNew,self.tk,ti,self.tj);
         
         out = old.copy()
-        out.values = wi*old.values + wj*center_of_mass_1.values + wk*center_of_mass_2.values
+        out = wi*old + wj*center_of_mass_1 + wk*center_of_mass_2
         # Jacobian
-        self.log_J = out.dimension * np.log(np.abs(wi))
+        self.log_J = out.shape[0] * np.log(np.abs(wi))
         return out
 
 class EnsembleStretch(EnsembleProposal):
@@ -281,13 +289,14 @@ class EnsembleStretch(EnsembleProposal):
         """
         scale = 2.0 # Will stretch factor in (1/scale,scale)
         # Pick a random point to move toward
-        a = self.ensemble.sample(1)[0]
+        idx = self.rng.integers(low=0, high=self.ensemble.shape[0], size=1)
+        a = self.ensemble[idx[0]]
         # Pick the scale factor
         x = self.rng.uniform(-1,1)*np.log(scale)
         Z = exp(x)
         out = a + (old - a)*Z
         # Jacobian
-        self.log_J = out.dimension * x
+        self.log_J = out.shape[0] * x
         return out
 
 class EnsembleModifiedStretch(EnsembleProposal):
@@ -308,16 +317,17 @@ class EnsembleModifiedStretch(EnsembleProposal):
         """
         scale  = 2.0 # Will stretch factor in (1/scale,scale)
         # Pick a random point to move toward
-        a, b   = self.ensemble.sample(2)
+        idx = self.rng.integers(low=0, high=self.ensemble.shape[0], size=2)
+        a, b   = self.ensemble[idx[0]], self.ensemble[idx[1]]
         c      = self.rng.uniform(-1,1)
-        r_star = c*a.values+(1-c)*b.values
+        r_star = c*a+(1-c)*b
         # Pick the scale factor
         x = self.rng.uniform(-1,1)*np.log(scale)
         Z = exp(x)
         out = old.copy()
-        out.values = Z*old.values + (1-Z)*r_star
+        out = Z*old + (1-Z)*r_star
         # Jacobian
-        self.log_J = out.dimension * x
+        self.log_J = out.shape[0] * x
         return out
         
 class DifferentialEvolution(EnsembleProposal):
@@ -341,7 +351,8 @@ class DifferentialEvolution(EnsembleProposal):
         ----------
         out: :obj:`raynest.parameter.LivePoint`
         """
-        a, b = self.ensemble.sample(2)
+        idx = self.rng.integers(low=0, high=self.ensemble.shape[0], size=2)
+        a, b   = self.ensemble[idx[0]], self.ensemble[idx[1]]
         sigma = 1e-4 # scatter around difference vector by this factor
         out = old + (b-a)*self.rng.normal(1.0,sigma)
         return out
@@ -356,19 +367,13 @@ class EnsembleEigenVector(EnsembleProposal):
     eigen_vectors = None
     covariance    = None
     ensemble      = None
+    
     def set_ensemble(self, ensemble):
         """
         Over-ride default set_ensemble so that the
         eigenvectors are recomputed when it is updated
         """
-        self.update_eigenvectors(ensemble)
-
-    def update_eigenvectors(self, ensemble):
-        """
-        Recompute the eigenvectors and eigevalues
-        of the covariance matrix of the ensemble
-        """
-        self.eigen_values, self.eigen_vectors = ensemble.get_eigen_quantities()
+        self.mean, self.covariance, self.eigen_values, self.eigen_vectors = update_mean_covariance(ensemble.T)
 
     def get_sample(self,old):
         """
@@ -383,9 +388,9 @@ class EnsembleEigenVector(EnsembleProposal):
         """
         out = old.copy()
         # pick a random eigenvector
-        i = self.rng.integers(low=0, high=old.dimension)
-        jumpsize = sqrt(fabs(self.eigen_values[i]))*self.rng.standard_normal()
-        out.values += jumpsize*self.eigen_vectors[:,i]
+        i = self.rng.integers(low=0, high=old.shape[0], size=1)[0]
+        jumpsize = np.sqrt(np.fabs(self.eigen_values[i]))*self.rng.standard_normal()
+        out += jumpsize*self.eigen_vectors[:,i]
         return out
 
 class EnsembleQuadratic(EnsembleProposal):
@@ -406,7 +411,8 @@ class EnsembleQuadratic(EnsembleProposal):
         ----------
         out: :obj:`raynest.parameter.LivePoint`
         """
-        a, b = self.ensemble.sample(2)
+        idx = self.rng.integers(low=0, high=self.ensemble.shape[0], size=2)
+        a, b   = self.ensemble[idx[0]], self.ensemble[idx[1]]
 
         ti   = self.rng.standard_normal()
         tNew = self.rng.standard_normal()
@@ -415,9 +421,9 @@ class EnsembleQuadratic(EnsembleProposal):
         wj = self.lagrange_weights(tNew,self.tj,self.tk,ti);
         wk = self.lagrange_weights(tNew,self.tk,ti,self.tj);
         out = old.copy()
-        out.values = wi*old.values + wj*a.values + wk*b.values
+        out = wi*old + wj*a + wk*b
         # Jacobian
-        self.log_J = out.dimension * np.log(np.abs(wi))
+        self.log_J = out.shape[0] * np.log(np.abs(wi))
         return out
 
 class DefaultProposalCycle(ProposalCycle):
@@ -461,7 +467,7 @@ class HamiltonianProposalCycle(ProposalCycle):
 
 class HamiltonianProposal(EnsembleProposal):
     """
-    Base class for hamiltonian proposals
+    Base class for hamiltonian proposals BROKEN, DO NOT USE!
     """
     covariance           = None
     mass_matrix          = None

@@ -7,8 +7,7 @@ from math import log
 from collections import deque
 
 from . import parameter
-from .proposal import DefaultProposalCycle, EnsembleProposal
-from . import proposal
+from .proposal import DefaultProposalCycle, EnsembleProposal, update_mean_covariance
 import numpy.lib.recfunctions as rfn
 import array
 from .nest2pos import acl, autocorrelation
@@ -114,7 +113,7 @@ class Sampler(object):
         # the stored samples
         ACL = []
         s   = list(self.samples)
-        samples = np.array([x.values for x in s[-self.max_storage:]])
+        samples = np.array([x for x in s[-self.max_storage:]])
         # compute the ACL on the max_storage set of samples, choosing a window length of 5*tau
         ACL = [acl(samples[:,i], c=5) for i in range(samples.shape[1])]
         
@@ -134,23 +133,22 @@ class Sampler(object):
         evolves it. Proposed sample is then sent back
         to :obj:`raynest.NestedSampler`.
         """
-        (Nmcmc, outParam) = self.return_sample(old, logLmin)
+        (Nmcmc, outParam, logP, logL) = self.return_sample(old, logLmin)
         # Send the sample to the Nested Sampler
 
         self.counter += 1
         if self.counter%10 == 0:
             self.estimate_acl()
         
-        return self.acceptance, self.sub_acceptance, Nmcmc, outParam
+        return self.acceptance, self.sub_acceptance, Nmcmc, outParam, logP, logL
 
     def set_ensemble(self, ensemble):
         if self.verbose > 3:
             self.logger.info("Sampler {0} -- setting ensemble".format(os.getpid()))
-        
+
         for p in self.proposal.proposals:
             if isinstance(p, EnsembleProposal):
                 p.set_ensemble(ensemble)
-        del ensemble
         
         return 0
 
@@ -164,22 +162,23 @@ class MetropolisHastingsSampler(Sampler):
 
         sub_counter = 0
         sub_accepted = 0
-        logp_old = self.model.log_prior(oldparam)
+        logP_old = self.model.log_prior(oldparam)
 
         while True:
 
             sub_counter += 1
             newparam = self.proposal.get_sample(oldparam.copy())
-            newparam.logP = self.model.log_prior(newparam)
+            logP = self.model.log_prior(newparam)
+            
+            if logP-logP_old + self.proposal.log_J > np.log(self.rng.random()):
 
-            if newparam.logP-logp_old + self.proposal.log_J > np.log(self.rng.random()):
+                logL = self.model.log_likelihood(newparam)
 
-                newparam.logL = self.model.log_likelihood(newparam)
-
-                if newparam.logL > logLmin:
+                if logL > logLmin:
 
                     oldparam = newparam.copy()
-                    logp_old = newparam.logP
+                    logP_old = logP
+                    logL_old = logL
                     sub_accepted+=1
 
             # append the sample to the array of samples
@@ -193,7 +192,7 @@ class MetropolisHastingsSampler(Sampler):
         self.mcmc_counter += sub_counter
         self.acceptance    = float(self.mcmc_accepted)/float(self.mcmc_counter)
         # return the new sample
-        return (sub_counter, oldparam)
+        return (sub_counter, oldparam, logP_old, logL_old)
 
 
 @ray.remote
@@ -206,12 +205,10 @@ class HamiltonianMonteCarloSampler(Sampler):
     initialised = False
     density     = None
     
-    def set_ensemble(self, ensemble_ref):
+    def set_ensemble(self, ensemble):
 
-        ensemble = ray.get(ensemble_ref)[0]
         # compute the covariance
-        ensemble.update_mean_covariance()
-        covariance = ensemble.get_covariance()
+        mean, covariance, eigen_values, eigen_vectors = update_mean_covariance(ensemble)
             
         self.density  = ADPGMM(self.model.bounds, probit = False)
         for e in ensemble._list:
@@ -250,7 +247,7 @@ class HamiltonianMonteCarloSampler(Sampler):
         self.mcmc_counter  += sub_counter
         self.acceptance     = float(self.mcmc_accepted)/float(self.mcmc_counter)
 
-        self.density.add_new_point(oldparam.values)
+        self.density.add_new_point(oldparam)
         
         return (sub_counter, oldparam)
          
@@ -261,8 +258,8 @@ class SliceSampler(Sampler):
     https://arxiv.org/pdf/2002.06212v1.pdf
     """
     mu             = 1.0
-    max_steps_out  = 1000 # maximum stepping out steps allowed
-    max_slices     = 1000 # maximum number of slices allowed
+    max_steps_out  = 100 # maximum stepping out steps allowed
+    max_slices     = 100 # maximum number of slices allowed
     
     def adapt_length_scale(self):
         """
@@ -311,11 +308,11 @@ class SliceSampler(Sampler):
             sub_counter += 1
 
             direction_vector = self.proposal.get_direction(mu = self.mu)
-            if not(isinstance(direction_vector,parameter.LivePoint)):
-                direction_vector = parameter.LivePoint(oldparam.names,d=direction_vector)
+#            if not(isinstance(direction_vector,parameter.LivePoint)):
+#                direction_vector = parameter.LivePoint(oldparam.names,d=direction_vector)
 
             Y = logLmin
-            Yp = oldparam.logP-self.rng.exponential()
+            Yp = self.model.log_prior(oldparam) - self.rng.exponential()
             J = np.floor(self.max_steps_out*self.rng.random())
             K = (self.max_steps_out-1)-J
             # keep on expanding until we get outside the logL boundary from the left
@@ -357,12 +354,12 @@ class SliceSampler(Sampler):
                 # generate a new point between the boundaries we identified
                 Xprime        = self.rng.uniform(self.L,self.R)
                 newparam      = direction_vector * Xprime + oldparam
-                newparam.logP = self.model.log_prior(newparam)
+                logP          = self.model.log_prior(newparam)
 
-                if newparam.logP > Yp:
+                if logP > Yp:
                     # compute the new value of logL
-                    newparam.logL = self.model.log_likelihood(newparam)
-                    if newparam.logL > Y:
+                    logL = self.model.log_likelihood(newparam)
+                    if logL > Y:
                         oldparam     = newparam.copy()
                         sub_accepted += 1
                         break
@@ -391,7 +388,7 @@ class SliceSampler(Sampler):
         if logLmin == -np.inf:
             self.adapt_length_scale()
 
-        return (sub_counter, oldparam)
+        return (sub_counter, oldparam, logP, logL)
 
 @ray.remote
 class SamplersCycle(Sampler):
@@ -425,6 +422,7 @@ class SamplersCycle(Sampler):
         Updates the ensemble statistics
         by calling it on each :obj:`EnsembleProposal`
         """
+        ensemble = np.atleast_2d(ensemble)
         for s in self.samplers:
             for p in s.proposal.proposals:
                 if isinstance(p, EnsembleProposal):

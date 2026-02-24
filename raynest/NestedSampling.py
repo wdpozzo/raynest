@@ -1,7 +1,8 @@
 from __future__ import division, print_function
+from asyncio import tasks
 import sys
 import os
-import dill
+import pickle
 import time
 import logging
 import bisect
@@ -20,70 +21,6 @@ import copy
 import ray
 from tqdm import tqdm
 logger = logging.getLogger('raynest.NestedSampling')
-
-class KeyOrderedList(list):
-    """
-    List object that is ordered according to a key
-
-    Parameters
-    ----------
-    iterable : array_like
-        Initial input used to intialise the list
-    key : function, optional
-        Key to use to sort the list, by defaul it is sorted by its
-        values.
-    """
-    def __init__(self, iterable, key=lambda x: x):
-        iterable = sorted(iterable, key=key)
-        super(KeyOrderedList, self).__init__(iterable)
-
-        self._key = key
-        self._keys = [self._key(v) for v in iterable]
-
-    def search(self, item):
-        """
-        Find the location of a new entry
-        """
-        return bisect.bisect(self._keys, self._key(item))
-
-    def add(self, item):
-        """
-        Update the ordered list with a single item and return the index
-        """
-        index = self.search(item)
-        self.insert(index, item)
-        self._keys.insert(index, self._key(item))
-        return index
-
-
-class OrderedLivePoints(KeyOrderedList):
-    """
-    Object that contains live points ordered by increasing log-likelihood. Requires
-    the log-likelihood to be pre-computed.
-
-    Assumes the log-likelihood is accesible as an attribute of each live point.
-
-    Parameters
-    ----------
-    live_points : array_like
-        Initial live points
-    """
-    def __init__(self, live_points):
-        super(OrderedLivePoints, self).__init__(live_points, key=lambda x: x.logL)
-
-    def insert_live_point(self, live_point):
-        """
-        Insert a live point and return the index of the new point
-        """
-        return self.add(live_point)
-
-    def remove_n_worst_points(self, n):
-        """
-        Remove the n worst live points
-        """
-        del self[:n]
-        del self._keys[:n]
-
 
 class _NSintegralState(object):
     """
@@ -251,6 +188,7 @@ class NestedSampler(object):
         self.logger         = logging.getLogger(loggername)
         self.logger.addHandler(logging.StreamHandler())
         self.model          = model
+        self.dimension      = len(model.names)
 
         if state is None:
             if rng == None:
@@ -276,7 +214,10 @@ class NestedSampler(object):
             self.iteration      = 0
             self.prior_samples  = []
             self.nested_samples = []
+            self.logLs          = []
+            self.logPs          = []
             self.rolling_p      = []
+            self.insertion_indices = []
             self.logZ           = None
             self.resume_file    = resume_file
             sys.stdout.flush()
@@ -286,6 +227,7 @@ class NestedSampler(object):
             header.write('\t'.join(self.model.names))
             header.write('\tlogL\n')
             header.close()
+            self.integral_state    = _NSintegralState(self.nlive)
             self.initialise_live_points()
             self.initialised    = False
         else:
@@ -298,18 +240,20 @@ class NestedSampler(object):
 
     def initialise_live_points(self):
 
-        l = []
-
+        self.live_points = np.zeros((self.nlive, self.dimension))
+        self.logP = np.zeros(self.nlive)
+        self.logL = np.zeros(self.nlive)
+        
         with tqdm(total=self.nlive, disable = not self.verbose, desc='raynest: populate samplers', position=self.position) as pbar:
             for i in range(self.nlive):
 
-                p = self.model.new_point(rng = self.rng)
-                p.logP = self.model.log_prior(p)
-                p.logL = self.model.log_likelihood(p)
-                l.append(p)
+                p, logP = self.model.new_point(rng = self.rng)
+                logL = self.model.log_likelihood(p)
+                self.live_points[i] = p
+                self.logP[i] = logP
+                self.logL[i] = logL
                 pbar.update()
-        
-        self.live_points = LivePoints(l, self.rng, n_replace = self.nthreads)
+        #self.live_points = LivePoints(self.live_points, self.rng, n_replace=self.nthreads, verbose=self.verbose)
 
     def setup_output(self, output):
         """
@@ -341,7 +285,8 @@ class NestedSampler(object):
         with open(self.output_file,"w") as f:
             f.write('{0:s}\n'.format(self.model.header().rstrip()))
             for ns in self.nested_samples:
-                f.write('{0:s}\n'.format(self.model.strsample(ns).rstrip()))
+                line='\t'.join('{0:.20e}'.format(ns[n][0]) for n in self.output_names)
+                f.write('{0:s}\n'.format(line.rstrip()))
 
     def write_evidence_to_file(self):
         """
@@ -350,95 +295,123 @@ class NestedSampler(object):
         with open(self.evidence_file,"w") as f:
 
             f.write('#logZ\tlogLmax\tH\n')
-            f.write('{0:.5f} {1:.5f} {2:.2f}\n'.format(self.live_points.get_logZ(),
-                                                       self.live_points.get_logLmax(),
-                                                       self.live_points.get_info()))
+            f.write('{0:.5f} {1:.5f} {2:.2f}\n'.format(self.integral_state.logZ,
+                                                       self.logLmax,
+                                                       self.integral_state.info))
 
     def consume_sample(self, pool):
         """
         requests the workers to update the live points
         and updates the evidence logZ
         """
-        # Get the worst live points
-        self.worst   = self.live_points.get_worst(self.nthreads)
-        # get the necessary statistics from the LivePoint actor
-        self.logLmin, self.logLmax, logZ, info = self.live_points.get_logLs_logZ_info()
 
+        lp_ref = ray.put(self.live_points)
+        all_workers = []
+        while True:
+            worker = pool.pop_idle()
+            if worker is None:
+                break
+            worker.set_ensemble.remote(lp_ref)
+            all_workers.append(worker)
+
+        nreplace = len(all_workers)
+
+        # Get the worst live points
+        # assume that they are already sorted according to logL
+        self.worst   = self.live_points[:nreplace].copy()
+        self.integral_state.increment(self.logL[nreplace-1], nreplace=nreplace)
+
+        for i,w in enumerate(self.worst):
+            self.append_nested_sample(w, self.logP[i], self.logL[i])
+        
+        # get the necessary statistics from the LivePoint actor
+        self.logLmin, self.logLmax, logZ, info = self.logL[nreplace-1], self.logL[-1], self.integral_state.logZ, self.integral_state.info
+        
         if self.verbose:
-            logLtmp = self.live_points.get_worst_logLs()
+            logLtmp = self.logL[:nreplace]
 
         self.condition = logaddexp(logZ,self.logLmax - self.iteration/(float(self.nlive))) - logZ
         
-        # set up the ensemble statistics
-        if (self.iteration % (self.nlive//10)) < self.nthreads:
+        idx = self.rng.integers(low=nreplace, high=self.nlive, size=self.nthreads)
+        starting_points = self.live_points[idx].copy()
+        tasks = {}
+        for i, w in enumerate(all_workers):
+            ref = w.produce_sample.remote(starting_points[i], self.logLmin)
+            tasks[ref] = i
 
-            for s in pool.map(lambda a, v: a.set_ensemble.remote(self.live_points), range(self.nthreads)):
-                pass
-            
-        starting_points = self.live_points.sample(self.nthreads)
+        while tasks:
+            ready, _ = ray.wait(list(tasks.keys()), num_returns=1)
+            ref = ready[0]
 
-        for v in starting_points:
-            pool.submit(lambda a, v: a.produce_sample.remote(v, self.logLmin), v)
+            worker_index = tasks.pop(ref)
+            result = ray.get(ref)
 
-        i = 0
-        while pool.has_next():
+            acceptance, sub_acceptance, self.jumps, proposed, proposed_logP, proposed_logL = result
 
-            acceptance, sub_acceptance, self.jumps, proposed = pool.get_next()
-
-            if proposed.logL > self.logLmin:
+            if proposed_logL > self.logLmin:
                 # replace worst point with new one
-                self.live_points.insert(i%self.nthreads,proposed.copy())
+                insertion_index = replace_and_reinsert(self.live_points, self.logP, self.logL, worker_index, proposed, proposed_logP, proposed_logL)
+                self.insertion_indices.append(insertion_index)
                 self.accepted  += 1
                 self.iteration += 1
 
-                if self.verbose:
+                if self.verbose > 1:
                     self.logger.info("{0:d}: n:{1:4d} NS_acc:{2:.3f} S{3:02d}_acc:{4:.3f} sub_acc:{5:.3f} H: {6:.2f} logL {7:.5f} --> {8:.5f} dZ: {9:.3f} logZ: {10:.3f} logLmax: {11:.2f}"\
-                        .format(self.iteration, self.jumps, self.acceptance, i%self.nthreads, acceptance, sub_acceptance, info,\
-                        logLtmp[i%self.nthreads], proposed.logL, self.condition, logZ, self.logLmax))
-
-                i += 1
+                        .format(self.iteration, self.jumps, self.acceptance, worker_index, acceptance, sub_acceptance, info,\
+                        logLtmp[worker_index], proposed_logL, self.condition, logZ, self.logLmax))
 
             else:
                 self.rejected += 1
-                p = pool.submit(lambda a, v: a.produce_sample.remote(v, self.logLmin), starting_points[i%self.nthreads])
+                ref = all_workers[worker_index].produce_sample.remote(starting_points[worker_index], self.logLmin)
+                tasks[ref] = worker_index
 
             self.acceptance = float(self.accepted)/float(self.accepted + self.rejected)
 
-        self.live_points.remove_n_worst_points(self.nthreads)
-        self.live_points.update_mean_covariance()
-
+        for w in all_workers:
+            pool.push(w)
+        
     def reset(self, pool):
         """
         Initialise the pool of `raynest.parameter.LivePoint` by
         sampling them from the `raynest.model.log_prior` distribution
         """
         # set up  the ensemble statistics
-        
-        for s in pool.map(lambda a, v: a.set_ensemble.remote(self.live_points), range(self.nthreads)):
+        lp_ref = ray.put(self.live_points)
+        for s in pool.map(lambda a, v: a.set_ensemble.remote(lp_ref), range(self.nthreads)):
             pass
         
         # send all live points to the samplers for start
         for i in range(self.nlive):
-            pool.submit(lambda a, v: a.produce_sample.remote(v, -np.inf), self.live_points.get(i))
+            pool.submit(lambda a, v: a.produce_sample.remote(v, -np.inf), self.live_points[i])
 
         i = 0
+        self.output_names = self.model.names+['logPrior','logL']
+        self.prior_samples = np.zeros(self.nlive, dtype = {'names':self.output_names, 'formats':['f8' for _ in self.output_names]})
 
         with tqdm(total=self.nlive, disable= not self.verbose, desc='raynest: sampling prior', position=self.position) as pbar:
             while pool.has_next():
-                acceptance,sub_acceptance,self.jumps,x = pool.get_next()
-                if np.isnan(x.logL):
+                acceptance,sub_acceptance,self.jumps,x,logP,logL = pool.get_next()
+                if np.isnan(logL):
                     self.logger.warning("Likelihood function returned NaN for params "+str(x))
                     self.logger.warning("You may want to check your likelihood function")
-                if np.isfinite(x.logP) and np.isfinite(x.logL):
-                    self.live_points.set(i,x)
-                    self.prior_samples.append(x)
+                if np.isfinite(logP) and np.isfinite(logL):
+                    self.logP[i] = logP
+                    self.logL[i] = logL
+                    self.live_points[i] = x
+                    for j, n in enumerate(self.model.names):
+                        self.prior_samples[n][i] = x[j]
+                    self.prior_samples['logL'][i] = logL
+                    self.prior_samples['logPrior'][i] = logP
+       
                     i += 1
                     pbar.update()
                 else:
-                    pool.submit(lambda a, v: a.produce_sample.remote(v, -np.inf), self.live_points.get(i))
+                    pool.submit(lambda a, v: a.produce_sample.remote(v, -np.inf), self.live_points[i])
 
-        self.live_points.update_mean_covariance()
-        self.live_points.set_ordered_list()
+        idx = np.argsort(self.logL)
+        self.live_points = self.live_points[idx]
+        self.logP = self.logP[idx]
+        self.logL = self.logL[idx]
 
         if self.verbose:
             sys.stderr.write("\n")
@@ -453,12 +426,12 @@ class NestedSampler(object):
             self.reset(pool)
         else:
             self.logger.info("Nested Sampling process {0!s}, restoring samplers".format(os.getpid()))
-
-            for s in pool.map(lambda a, v: a.set_ensemble.remote(self.live_points), range(self.nthreads)):
+            lp_ref = ray.put(self.live_points)
+            for s in pool.map(lambda a, v: a.set_ensemble.remote(lp_ref), range(self.nthreads)):
                 pass
 
         if self.prior_sampling:
-            self.logZ, self.nested_samples = self.live_points.finalise()
+            self.logZ = self.finalise()
             self.write_chain_to_file()
             self.write_evidence_to_file()
             self.logLmin = np.inf
@@ -467,14 +440,19 @@ class NestedSampler(object):
             return 0
 
         try:
+
             while self.condition > self.tolerance:
                 self.consume_sample(pool)
+
+                # update periodic checkpoint
                 if time.time() - self.last_checkpoint_time > self.periodic_checkpoint_interval:
                     self.save()
                     self.last_checkpoint_time = time.time()
 
-                if (self.iteration % self.nlive) < self.nthreads:
+                # update rolling diagnostics occasionally
+                if (self.iteration % self.nlive) == 0:
                     self.check_insertion_indices()
+
                 auto_garbage_collect()
 
         except CheckPoint:
@@ -482,8 +460,8 @@ class NestedSampler(object):
             sys.exit(130)
 
         # Refine evidence estimate
-        self.logZ, self.nested_samples = self.live_points.finalise()
-        self.info = self.live_points.get_info()
+        self.logZ = self.finalise()
+        self.info = self.integral_state.info
         # output the chain and evidence
         self.write_chain_to_file()
         self.write_evidence_to_file()
@@ -493,22 +471,36 @@ class NestedSampler(object):
 
         # Some diagnostics
         if self.verbose > 1 :
-            self.live_points.plot(os.path.join(self.output_folder,'logXlogL.png'))
+            self.integral_state.plot(os.path.join(self.output_folder,'logXlogL.png'))
 
         return 0
 
+    def finalise(self):
+        # final adjustments
+        for i in range(self.nlive):
+            self.integral_state.increment(self.logL[i], nlive=self.nlive-i, nreplace = 1)
+            self.append_nested_sample(self.live_points[i], self.logP[i], self.logL[i])
+
+        return self.integral_state.logZ
+    
+    def append_nested_sample(self, sample, logP, logL):
+        x = np.zeros(1, dtype = {'names':self.output_names, 'formats':['f8' for _ in self.output_names]})
+        for j, n in enumerate(self.model.names):
+            x[n][0] = sample[j]
+        x['logL'][0] = logL
+        x['logPrior'][0] = logP
+        self.nested_samples.append(x)
+        
     def check_insertion_indices(self, rolling=True, filename=None):
         """
         Checking the distibution of the insertion indices either during
         the nested sampling run (rolling=True) or for the whole run
         (rolling=False).
         """
-        if not self.live_points.get_insertion_indices():
-            return
         if rolling:
-            indices = self.live_points.get_insertion_indices()[-self.nlive:]
+            indices = np.array(self.insertion_indices)[-self.nlive:]
         else:
-            indices = self.live_points.get_insertion_indices()
+            indices = indices = np.array(self.insertion_indices)
 
         D, p = kstest(indices, 'uniform', args=(0, 1))
         if rolling:
@@ -540,12 +532,21 @@ class NestedSampler(object):
     def get_logZ(self):
         return self.logZ
 
+    def get_logLs(self):
+        return self.logLs
+    
+    def get_logPs(self):
+        return self.logPs
+    
     def get_nlive(self):
         return self.nlive
 
     def get_information(self):
         return self.info
 
+    def get_insertion_indeces(self):
+        return self.insertion_indices
+    
     def save(self):
         state = self.__dict__.copy()
         self.logger.critical('Saving Nested Sampling state in ' + str(self.resume_file))
@@ -553,230 +554,46 @@ class NestedSampler(object):
         del state['logger']
 
         with open(self.resume_file,'wb') as f:
-            dill.dump(state,f)
+            pickle.dump(state,f)
 
-class LivePoints:
+def get_worst(self, n):
     """
-    class holding the live points pool
-
-    parameters
-    ==========
-
-    l: list
-        list of live points generated from the `raynest.model` new_point method
-
-    n_replace: int
-        number of live points to be replaced at each step. must coincide with the number of
-        sampling threads
-
-    verbose: int
-        level of verbosity
+    selects the lowest likelihood N live points
+    and updates the integral state
     """
-    def __init__(self, l, rng, n_replace = 1, verbose = 2):
-        self.rng                  = rng
-        self.n_replace            = n_replace
-        self._list                = l
-        self.n                    = len(l)
-        self.dim                  = self._list[0].dimension
-        self.mean                 = None
-        self.covariance           = None
-        self.eigen_values         = None
-        self.eigen_vectors        = None
-        self.likelihood_gradient  = None
-        self.worst                = None
-        self.logLmax              = -np.inf
-        self.logLmin              = -np.inf
-        self.state                = _NSintegralState(self.n)
-        self.logger               = logging.getLogger('raynest')
-        self.nested_samples       = []
-        self.insertion_indices    = []
-        self.update_mean_covariance()
+    self.logLmin = self.logL[0]
+    self.logLmax = self.logL[-1]
+    self.worst = self._list[:n]
+    self.nested_samples.extend(self.worst)
+    self.state.increment(self.worst[n-1].logL, nreplace=self.n_replace)
+    return self.worst
 
-    def set_ordered_list(self):
-        """
-        initialise the list of live points as a ordered list
-        """
-        self._list = OrderedLivePoints(self._list)
+def replace_and_reinsert(live_points, logP, logL, idx, new_live_point, new_logP, new_logL):
+    """
+    arr  : (n, d) array
+    keys : (n,) sorted in decreasing order
+    idx  : index to replace
+    """
 
-    def get(self, i):
-        """
-        return the i-th element
-        """
-        return self._list[i]
+    # Find new position
+    insert_pos = np.searchsorted(logL, new_logL)
 
-    def get_mean_covariance(self):
-        """
-        return the live points sample mean and covariance
-        """
-        return self.get_mean(), self.get_covariance()
+    # Account for removal of idx
+    if insert_pos > idx:
+        insert_pos -= 1
 
-    def get_covariance(self):
-        """
-        return the live points sample covariance
-        """
-        return self.covariance
+    # Shift block in-place
+    if insert_pos < idx:
+        live_points[insert_pos+1:idx+1] = live_points[insert_pos:idx]
+        logP[insert_pos+1:idx+1] = logP[insert_pos:idx]
+        logL[insert_pos+1:idx+1] = logL[insert_pos:idx]
+    elif insert_pos > idx:
+        live_points[idx:insert_pos] = live_points[idx+1:insert_pos+1]
+        logP[idx:insert_pos] = logP[idx+1:insert_pos+1]
+        logL[idx:insert_pos] = logL[idx+1:insert_pos+1]
 
-    def get_mean(self):
-        """
-        return the live points sample mean
-        """
-        return self.mean
-
-    def get_eigen_quantities(self):
-        """
-        return the live points sample covariance eigen values and eigen vectors
-        """
-        return self.eigen_values, self.eigen_vectors
-
-    def get_length(self):
-        """
-        return the number of live points
-        """
-        return self.n
-
-    def get_dimension(self):
-        """
-        return the dimension of each live point
-        """
-        return self.dim
-
-    def set(self,i, val):
-        """
-        set the i-th live point to val
-        """
-        self._list[i] = val
-
-    def insert(self, i, val):
-        """
-        insert val in the ordered list
-        """
-        index = self._list.insert_live_point(val)
-        self.insertion_indices.append((index - self.n_replace) / (self.n - i - 1))
-
-    def to_list(self):
-        """
-        return the list of live points
-        """
-        return self._list
-
-    def update_mean_covariance(self):
-        """
-        Recompute mean and covariance matrix
-        of the ensemble of Live points
-        """
-        cov_array = np.zeros((self.dim,self.n))
-        if self.dim == 1:
-            name=self._list[0].names[0]
-            self.covariance = np.atleast_2d(np.var([self._list[j][name] for j in range(self.n)]))
-            self.mean       = np.atleast_1d(np.mean([self._list[j][name] for j in range(self.n)]))
-        else:
-            for i,name in enumerate(self._list[0].names):
-                for j in range(self.n): cov_array[i,j] = self._list[j][name]
-            self.covariance = np.cov(cov_array)
-            self.mean       = np.mean(cov_array,axis=1)
-        self.eigen_values, self.eigen_vectors = np.linalg.eigh(self.covariance)
-
-    def get_as_array(self):
-        """
-        return the live points as a stacked (n,d) numpy array
-        """
-        n = self.n+len(self.nested_samples)
-        as_array = np.zeros((self.dim,n))
-        for i,name in enumerate(self._list[0].names):
-            for j in range(self.n): as_array[i,j] = self._list[j][name]
-            for j in range(len(self.nested_samples)): as_array[i,j+self.n] = self.nested_samples[j][name]
-
-        return as_array.T # as an array (N,D)
-
-    def sample(self, n):
-        """
-        randomly sample n live points
-        """
-        if self.worst == None:
-            return [self._list[i] for i in self.rng.choice(self.n, n, replace=False)]
-        else:
-            return [self._list[i] for i in self.rng.choice(self.n-n, n, replace=False)]
-
-    def sample_around(self, q, n):
-        """
-        sample n live points closest to q
-        """
-        distance = lambda list_value : np.sum(list_value.values - q.values)
-        closest_value = min(self._list, key=distance)
-        idx = self._list.index(closest_value)
-        return [self.get(i) for i in range(n//2-idx,n//2+idx)]
-
-    def get_logLmax(self):
-        """
-        return the maximum likelihood value
-        """
-        return self.logLmax
-
-    def get_logLmin(self):
-        """
-        return the minimum likelihood value
-        """
-        return self.logLmin
-
-    def get_worst(self, n):
-        """
-        selects the lowest likelihood N live points
-        and updates the integral state
-        """
-        self.logLmin = self._list[n-1].logL
-        self.logLmax = self._list[-1].logL
-        self.worst = self._list[:n]
-        self.nested_samples.extend(self.worst)
-        self.state.increment(self.worst[n-1].logL, nreplace=self.n_replace)
-        return self.worst
-
-    def remove_n_worst_points(self,n):
-        """
-        remove the set of worst n live points
-        """
-        self._list.remove_n_worst_points(n)
-
-    def get_insertion_indices(self):
-        """
-        return the insertion indeces
-        """
-        return self.insertion_indices
-
-    def get_info(self):
-        """
-        return the information
-        """
-        return self.state.info
-
-    def get_logZ(self):
-        """
-        return the log evidence
-        """
-        return self.state.logZ
-
-    def get_logLs_logZ_info(self):
-        return self.get_logLmin(), self.get_logLmax(), self.get_logZ(), self.get_info()
-
-    def get_worst_logLs(self):
-        return np.array([w.logL for w in self.worst])
-
-    def finalise(self):
-        # final adjustments
-        self._list.sort(key=attrgetter('logL'))
-        for i,p in enumerate(self._list):
-            self.state.increment(p.logL, nlive=self.n-i, nreplace = 1)
-            self.nested_samples.append(p)
-
-        # Refine evidence estimate
-        self.logZ = self.state.finalise()
-        return self.state.logZ, self.nested_samples
-
-    def plot(self,filename):
-        self.state.plot(filename)
-        return 0
-
-    def _get_integral_state(self):
-        return self.state
-
-    def _set_internal_state(self, state):
-        self.state = state
+    # Insert new data
+    live_points[insert_pos] = new_live_point
+    logL[insert_pos] = new_logL
+    logP[insert_pos] = new_logP
+    return (insert_pos - idx) / (len(live_points) - idx - 1)

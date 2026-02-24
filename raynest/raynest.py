@@ -254,54 +254,53 @@ class raynest(object):
 
                     self.ns_pool.append(ns)
                 
-                samplers = []
-
-                # instantiate the sampler class
-                for i in range(nensemble//self.nnest):
-                    
-                    if self.seed is not None:
-                        rng = np.random.default_rng(next(self.seed))
-                    
-                    S = MetropolisHastingsSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
-        placement_group=pg)).remote(self.user,
-                                          maxmcmc,
-                                          rng         = rng,
-                                          verbose     = self.verbose,
-                                          proposal    = proposals['mhs']
-                                          )
-                    samplers.append(S)
-                
-                for i in range(nhamiltonian//self.nnest):
-                    
-                    if self.seed is not None:
-                        rng = np.random.default_rng(next(self.seed))
-                        
-                    S = HamiltonianMonteCarloSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
-        placement_group=pg)).remote(self.user,
-                                          maxmcmc,
-                                          rng         = rng,
-                                          verbose     = self.verbose,
-                                          proposal    = proposals['hmc']
-                                          )
-                    samplers.append(S)
-                    
-                for i in range(nslice//self.nnest):
-
-                    if self.seed is not None:
-                        rng = np.random.default_rng(next(self.seed))
-                        
-                    S = SliceSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
-        placement_group=pg)).remote(self.user,
-                                          maxmcmc,
-                                          rng         = rng,
-                                          verbose     = self.verbose,
-                                          proposal    = proposals['sli']
-                                          )
-                    samplers.append(S)
-                
-                self.pool.append(ActorPool(samplers))
                 self.results['run_{}'.format(j)] = {}
+            samplers = []
+
+            # instantiate the sampler class
+            for i in range(nensemble):
                 
+                if self.seed is not None:
+                    rng = np.random.default_rng(next(self.seed))
+                
+                S = MetropolisHastingsSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
+    placement_group=pg)).remote(self.user,
+                                        maxmcmc,
+                                        rng         = rng,
+                                        verbose     = self.verbose,
+                                        proposal    = proposals['mhs']
+                                        )
+                samplers.append(S)
+            
+            for i in range(nhamiltonian):
+                
+                if self.seed is not None:
+                    rng = np.random.default_rng(next(self.seed))
+                    
+                S = HamiltonianMonteCarloSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
+    placement_group=pg)).remote(self.user,
+                                        maxmcmc,
+                                        rng         = rng,
+                                        verbose     = self.verbose,
+                                        proposal    = proposals['hmc']
+                                        )
+                samplers.append(S)
+                
+            for i in range(nslice):
+
+                if self.seed is not None:
+                    rng = np.random.default_rng(next(self.seed))
+                    
+                S = SliceSampler.options(scheduling_strategy=PlacementGroupSchedulingStrategy(
+    placement_group=pg)).remote(self.user,
+                                        maxmcmc,
+                                        rng         = rng,
+                                        verbose     = self.verbose,
+                                        proposal    = proposals['sli']
+                                        )
+                samplers.append(S)
+            
+            self.pool = ActorPool(samplers)
                     
             if self.seed is not None:
                 self.results['seed'] = self.seed
@@ -332,7 +331,7 @@ class raynest(object):
                 signal.signal(signal.SIGUSR2, sighandler)
             
             try:
-                unfinished = [self.ns_pool[v].nested_sampling_loop.remote(self.pool[v]) for v in  range(self.nnest)]
+                unfinished = [self.ns_pool[v].nested_sampling_loop.remote(self.pool) for v in  range(self.nnest)]
                 while len(unfinished) > 0:
                     finished, unfinished = ray.wait(unfinished)
                     ray.get(finished)
@@ -356,11 +355,11 @@ class raynest(object):
             self.postprocess(filename=filename)
 
             if self.verbose >= 2:
-                self.logger.critical("Checking insertion indeces")
-                ray.get([self.ns_pool[v].check_insertion_indices.remote(
-                                    rolling=False,
-                                    filename='insertion_indices_{}.dat'.format(v))
-                                    for v in range(self.nnest)])
+                #self.logger.critical("Checking insertion indeces")
+                #ray.get([self.ns_pool[v].check_insertion_indices.remote(
+                #                    rolling=False,
+                #                    filename='insertion_indices_{}.dat'.format(v))
+                #                    for v in range(self.nnest)])
  
                 self.logger.critical("Saving plots in {0}".format(self.output))
                 self.plot(corner = False)
@@ -389,15 +388,16 @@ class raynest(object):
 
         ns = ray.get([self.ns_pool[v].get_nested_samples.remote() for v in range(self.nnest)])
         ps = ray.get([self.ns_pool[v].get_prior_samples.remote() for v in range(self.nnest)])
+        logl = ray.get([self.ns_pool[v].get_logLs.remote() for v in range(self.nnest)])
+        logp = ray.get([self.ns_pool[v].get_logPs.remote() for v in range(self.nnest)])
         info = ray.get([self.ns_pool[v].get_information.remote() for v in range(self.nnest)])
 
         for i,l in enumerate(ps):
-
-            self.results['run_{}'.format(i)]['prior_samples'] = rfn.stack_arrays([s.asnparray()
+            self.results['run_{}'.format(i)]['prior_samples'] = rfn.stack_arrays([s
                                for s in l] ,usemask=False)
 
         for i,l in enumerate(ns):
-            self.results['run_{}'.format(i)]['nested_samples'] = rfn.stack_arrays([s.asnparray()
+            self.results['run_{}'.format(i)]['nested_samples'] = rfn.stack_arrays([s
                                for s in l] ,usemask=False)
 
         for i in range(self.nnest):
@@ -504,11 +504,9 @@ class raynest(object):
 
                              labels=self.prior_samples.dtype.names,
                              filename=os.path.join(self.output,'corner.pdf'))
-
-        live_points = ray.get([self.ns_pool[v].get_live_points.remote() for v in range(self.nnest)])
-        
+            
         for i in range(self.nnest):
-            plot.plot_indices(live_points[i].get_insertion_indices(), filename=os.path.join(self.output, 'insertion_indices_{}.pdf'.format(i)))
+            plot.plot_indices(ray.get(self.ns_pool[i].get_insertion_indeces.remote()), filename=os.path.join(self.output, 'insertion_indices_{}.pdf'.format(i)))
 
     def checkpoint(self):
         """

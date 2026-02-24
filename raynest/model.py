@@ -29,7 +29,7 @@ class Model(object):
             True: if all dimensions are within the bounds
             False: otherwise
         """
-        return all(self.bounds[i][0] < param.values[i] < self.bounds[i][1] for i in range(param.dimension))
+        return all(self.bounds[i][0] < param[i] < self.bounds[i][1] for i in range(param.shape[0]))
 
     def new_point(self, rng = None):
         """
@@ -47,14 +47,12 @@ class Model(object):
         logP = -inf
         
         while(logP==-inf):
-            p = LivePoint(self.names,
-                          d=np.array([generator(self.bounds[i][0],
-                                                self.bounds[i][1])
-                                       for i, _ in enumerate(self.names) ]
+            p = np.array([generator(self.bounds[i][0],
+                                    self.bounds[i][1])
+                                    for i, _ in enumerate(self.names) ]
                                     )
-                         )
-            logP=self.log_prior(p)
-        return p
+            logP = self.log_prior(p)
+        return p, logP
 
     @abstractmethod
     def log_likelihood(self,param):
@@ -141,7 +139,7 @@ class Model(object):
         """
         Return a string with the output file header
         """
-        return '\t'.join(self.names) + '\tlogL'
+        return '\t'.join(self.names) + '\tlogPrior'+ '\tlogL'
 
     def from_normalised(self, normalised_value):
         """

@@ -13,10 +13,11 @@ class GaussianModel(raynest.model.Model):
         self.names=['{0}'.format(i) for i in range(self.dim)]
         self.bounds=[[-10,10] for _ in range(self.dim)]
 #        self.bounds[0] = [-50, 50]
+        self.log_norm = -0.5 * self.dim * np.log(2.0 * np.pi)
         self.analytic_log_Z=0.0 - sum([np.log(self.bounds[i][1]-self.bounds[i][0]) for i in range(self.dim)])
 
     def log_likelihood(self,p):
-        return np.sum([-0.5*p[n]**2-0.5*np.log(2.0*np.pi) for n in p.names])##np.sum([self.distr.logpdf(p[n]
+        return -0.5 * np.dot(p, p) + self.log_norm
     
     def log_prior(self,p):
         logP = super(GaussianModel,self).log_prior(p)
@@ -49,9 +50,9 @@ def test_all():
 
 if __name__=='__main__':
 #    unittest.main(verbosity=2)
-    model=GaussianModel(dim = 5)
+    model=GaussianModel(dim = 150)
     work=raynest.raynest(model, verbose=2,
-                       nnest=4, nensemble=9, nlive=100, maxmcmc=5000, nslice=4, nhamiltonian=0, seed = 1,
+                       nnest=1, nensemble=20, nlive=1000, maxmcmc=5000, nslice=0, nhamiltonian=0, seed = 1,
                        resume=0, periodic_checkpoint_interval=600)
     work.run()
     print("analytic logZ = {0}".format(model.analytic_log_Z))
