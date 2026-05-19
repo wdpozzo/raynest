@@ -23,7 +23,6 @@ dependencies = [
   "numpy",
   "scipy",
   "corner",
-  "dill",
   "tqdm",
   "matplotlib",
   "ray",
